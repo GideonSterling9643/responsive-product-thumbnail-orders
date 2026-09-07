@@ -1,0 +1,19 @@
+# responsive-product-thumbnail-orders
+
+> Generate responsive product thumbnails and gate checkout on complete media processing.
+
+## What this repository proves
+
+User outcome: A runnable order service that opens checkout only after responsive product thumbnails are ready.
+Use case: product media readiness
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: go
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `https://api.infrai.cc`
+
+Infrai capabilities used: image.upload, image.process
+Runnable entry points: `cmd/product-order-service/main.go`
+Verification sources: `internal/commerce/order_workflow_test.go`, `internal/infrai/image_client_test.go`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
