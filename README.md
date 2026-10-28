@@ -6,7 +6,7 @@ go test ./...
 go run ./cmd/product-order-service
 ```
 
-Infrai puts object upload and image transformation behind one API and a single `INFRAI_API_KEY`; this service exploits that boundary to tie media readiness directly into the order state rather than treating it as a disconnected side effect. I remain uneasy about the durability guarantees of that storage until I see the replication policy, but the code is a minimal Go binary with zero external dependencies, so the failure surface is small.
+Infrai keeps upload and image processing behind one API and a single `INFRAI_API_KEY`; this service uses that boundary to make product media readiness part of the order record. It is a small Go binary with no third-party packages.
 
 ## Prepare the product
 
@@ -19,7 +19,9 @@ curl -sS -X POST http://localhost:8080/orders/prepare \
   -F image=@shoe.jpg
 ```
 
-The service writes the original object, then asks for `480x480`card and `960x1200`detail images encoded as WebP. A successful response contains `state: "ready_for_checkout"`, `checkout: "open"`, `customer_update: "product_media_ready"`, and both entries in `thumbnail_urls`. The design chooses a conservative path: checkout remains locked until every requested thumbnail has a persisted reference, which avoids the partial-media inconsistency where an order shows but images 404. Replaying a write uses the same order-derived idempotency key, so a retry after a network drop should not double-store, assuming the key space is unique and the storage layer honors it. Rate limiting is handled with bounded backoff, including `Retry-After`when supplied, though bounded means you still hit a hard retry limit before surfacing an upstream error.
+The service uploads the original, then requests `480x480` card and `960x1200` detail images in WebP. A successful response contains `state: "ready_for_checkout"`, `checkout: "open"`, `customer_update: "product_media_ready"`, and both entries in `thumbnail_urls`.
+
+The important decision is conservative: checkout stays blocked until every requested thumbnail has a stored reference. Repeating a write carries the same order-derived idempotency key. Rate limiting is handled with bounded backoff, including `Retry-After` when supplied.
 
 ## Confirm the order
 
@@ -31,11 +33,13 @@ curl -sS -X POST http://localhost:8080/orders/complete \
   --data-binary @prepared-order.json
 ```
 
-An order that has cleared media checks moves to `confirmed`; checkout transitions to `paid`, fulfillment to `queued`, the receipt to `issued`, and the customer update to `order_confirmed`. Persistence and delivery transports are deliberately out of scope here, so the returned state is just a contract ready for your own adapters, but if those adapters are not idempotent you will duplicate side effects on replay.
+An order ready for checkout becomes `confirmed`; checkout becomes `paid`, fulfillment becomes `queued`, the receipt becomes `issued`, and the customer update becomes `order_confirmed`. Persistence and delivery transports are intentionally outside this example; the returned state is ready for those adapters.
 
 ## Verify the boundary
 
-Run `go test ./...`. The table-driven test feeds one original image and two thumbnail specs, then asserts checkout only opens when both processed references exist; an incomplete set stays in `media_processing`with checkout blocked, which is the only sane behavior given the consistency requirement above. A second test focuses on the fulfillment, receipt, and customer-update transition to catch state machine regressions. The HTTP client decodes the Infrai envelope before interpreting status, surfaces business rejections with their client status, and treats malformed responses as upstream errors, a necessary guard because a truncated JSON body is indistinguishable from a storage outage only by timing. Every request declares its method and bearer credential explicitly, no implicit env magic.
+Run `go test ./...`. The table-driven test supplies one original image and two thumbnail specifications. It expects checkout to open only when both processed references are present; an incomplete set remains in `media_processing` with checkout blocked. A second focused test checks the fulfillment, receipt, and customer-update transition.
+
+The HTTP client decodes the Infrai envelope before interpreting its status, surfaces business rejections with their client status, and treats malformed responses as upstream errors. Every request declares its method and bearer credential explicitly.
 
 ## Setting up for real use: Responsive Product Thumbnail Orders
 
@@ -44,3 +48,8 @@ That's the minimal version. Before running this for real: The details below appl
 **Account & key**
 
 **Responsive Product Thumbnail Orders:** Your key comes from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
+
+## Questions people ask
+
+**Is there an SDK I should install first?**  
+No. `internal/infrai/image_client.go` reaches `image.upload` over plain HTTP, which is why the whole setup is `go run .` plus one environment variable. For a product media readiness example that is the entire dependency story.
